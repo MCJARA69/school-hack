@@ -18,6 +18,7 @@ A local web app for Emiliano (Master Academy, Miami) that pulls assignments and 
 - Grade tracking or GPA calculation
 - Replacing Schoology — this is a study tool, not a school management tool
 - Frontend polish (to be redesigned later)
+- Real Fortnite skin integration (future business idea — v1 uses virtual coins only)
 
 ## Architecture
 
@@ -31,8 +32,8 @@ A local web app for Emiliano (Master Academy, Miami) that pulls assignments and 
 
 ### 1. Login
 - Input for Schoology username and password
-- Credentials stored in local `.env` file, never sent to any cloud service
-- On submit: triggers Schoology scrape, redirects to Dashboard
+- Credentials are sent to `/api/sync` at runtime and never written to disk
+- On submit: triggers Schoology scrape, redirects to Dashboard on success; shows inline error on failure
 
 ### 2. Dashboard (Most Urgent First)
 - List of all upcoming assignments and exams sorted by due date
@@ -49,12 +50,12 @@ A local web app for Emiliano (Master Academy, Miami) that pulls assignments and 
 
 ## Backend API Endpoints
 
-| Method | Path | Description |
-|--------|------|-------------|
-| POST | `/api/sync` | Triggers Puppeteer scrape of Schoology, saves to cache |
-| GET | `/api/assignments` | Returns cached assignments + exams sorted by due date |
-| POST | `/api/study` | Sends subject + topic to Claude, returns lesson + 5 problems |
-| POST | `/api/check` | Sends user's answer to Claude, returns feedback |
+| Method | Path | Request body | Response |
+|--------|------|--------------|----------|
+| POST | `/api/sync` | `{ username, password }` | `{ ok: true }` or `{ error: string }` |
+| GET | `/api/assignments` | — | `Assignment[]` sorted by due date (exams before homework on same day) |
+| POST | `/api/study` | `{ assignmentId }` | `{ sessionId: string, lesson: string, problems: Problem[] }` |
+| POST | `/api/check` | `{ sessionId, problemIndex, answer }` | `{ correct: boolean, explanation: string }` |
 
 ## Data Model
 
@@ -65,23 +66,39 @@ type Assignment = {
   type: 'exam' | 'homework' | 'quiz'
   title: string
   dueDate: string        // ISO date string
-  topic?: string         // e.g. "Quadratic equations" — extracted from title if possible
+  topic: string          // extracted from title, or falls back to subject name
+}
+
+type Problem = {
+  index: number
+  question: string
+}
+
+type StudySession = {
+  sessionId: string      // uuid, created per /api/study call
+  assignmentId: string
+  lesson: string
+  problems: Problem[]
 }
 ```
 
 ## Schoology Scraping
 
-- Uses Puppeteer to log in at `app.schoology.com`
-- Navigates to each course section and scrapes upcoming items
-- Credentials: stored in local `.env` as `SCHOOLOGY_USER` and `SCHOOLOGY_PASS`
-- Cache TTL: 24 hours — re-scrapes on first load of the day
+- Login screen collects username + password at runtime and sends to `POST /api/sync`
+- Credentials are NOT written to disk — passed directly to Puppeteer for the scrape, then discarded
+- On wrong credentials or scrape failure, `/api/sync` returns `{ error: "..." }` and the Login screen shows an inline error message
+- Cache TTL: server checks timestamp in `data/assignments.json` on every `GET /api/assignments` call. If cache is fresh (<24h), returns it immediately. If stale, checks for in-memory credentials (a module-level variable set on last `/api/sync` call) and re-scrapes. If stale AND no in-memory credentials (e.g. server restarted), returns `{ error: "Session expired, please log in again" }` with HTTP 401 — the client redirects to Login.
+- `StudySession` objects accumulate in server memory and are never explicitly cleared — acceptable for a local single-user tool
+- Sort order: same due date → exams ranked above quizzes above homework
 
 ## Claude Integration
 
 - Model: `claude-sonnet-4-6`
-- Lesson prompt: given subject, topic, and student context (ADHD, struggling, needs simple explanations)
-- Practice prompt: generates 5 problems at appropriate difficulty, one at a time
-- Answer check prompt: evaluates user answer, returns correct/incorrect + full explanation
+- `/api/study`: generates lesson + 5 problems in one call. Creates a `StudySession` stored in server memory (keyed by `sessionId`) so the full context is available for answer checking.
+- `/api/check`: looks up the `StudySession` by `sessionId`, finds the problem at `problemIndex`, sends the question + user answer to Claude for evaluation. Returns `{ correct, explanation }`.
+- Session state lives in server memory only — if the server restarts, sessions reset (acceptable for a local tool).
+- If `topic` cannot be extracted from the assignment title, Claude is asked to infer an appropriate topic from the subject name and assignment title alone.
+- Student context injected into every prompt: "16-year-old student with ADHD, needs short clear explanations, no jargon, use examples."
 
 ## Tech Stack
 
@@ -96,6 +113,27 @@ schoology-study-app/
 ├── .env             # Credentials (gitignored)
 └── package.json
 ```
+
+## Rewards System
+
+Every action earns coins, saved to `data/rewards.json`:
+
+| Action | Coins |
+|--------|-------|
+| Complete a lesson (read through) | +10 |
+| Answer a practice problem correctly | +20 |
+| Answer incorrectly but retry and get it right | +10 |
+| Complete all 5 problems in a session | +50 bonus |
+| Study the day before an exam | +30 bonus |
+
+Coins are displayed on the Dashboard header. No levels or streaks in v1 — just a running total. Future versions can add unlockable badges, streaks, and real reward integrations.
+
+**New endpoint:**
+| Method | Path | Request body | Response |
+|--------|------|--------------|----------|
+| GET | `/api/rewards` | — | `{ coins: number }` |
+
+Coins are updated server-side when `/api/check` is called (correct answer) and when a study session is completed.
 
 ## Security
 
