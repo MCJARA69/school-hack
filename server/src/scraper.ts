@@ -2,15 +2,17 @@ import puppeteer from 'puppeteer'
 import type { Assignment } from './types.js'
 
 export async function scrapeSchoology(username: string, password: string): Promise<Assignment[]> {
-  const browser = await puppeteer.launch({ headless: true })
+  const browser = await puppeteer.launch({ headless: true, args: ['--no-sandbox', '--disable-setuid-sandbox'] })
   const page = await browser.newPage()
+  page.setDefaultTimeout(60000)
 
   try {
-    await page.goto('https://app.schoology.com/login', { waitUntil: 'networkidle2' })
+    await page.goto('https://app.schoology.com/login', { waitUntil: 'domcontentloaded' })
+    await page.waitForSelector('#edit-mail', { timeout: 30000 })
     await page.type('#edit-mail', username)
     await page.type('#edit-pass', password)
     await page.click('#edit-submit')
-    await page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 15000 })
+    await page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 30000 })
 
     // Check for login failure
     const errorEl = await page.$('.messages.error')
@@ -19,7 +21,7 @@ export async function scrapeSchoology(username: string, password: string): Promi
     }
 
     // Navigate to upcoming events
-    await page.goto('https://app.schoology.com/home?filter=upcoming', { waitUntil: 'networkidle2' })
+    await page.goto('https://app.schoology.com/home?filter=upcoming', { waitUntil: 'domcontentloaded' })
 
     const assignments: Assignment[] = await page.evaluate(() => {
       const items = Array.from(document.querySelectorAll('.s-edge-feed-item, .event-row, [data-item-type]'))

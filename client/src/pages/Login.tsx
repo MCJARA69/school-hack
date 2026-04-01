@@ -37,10 +37,10 @@ export function Login({ onSuccess }: { onSuccess: () => void }) {
             WebkitTextFillColor: 'transparent',
             backgroundClip: 'text',
           }}>
-            GRIND MODE
+            SCHOOL HACK
           </div>
           <div className="text-xs tracking-widest text-fn-blue uppercase opacity-70">
-            Study Planner
+            by MC Hara
           </div>
         </div>
 
