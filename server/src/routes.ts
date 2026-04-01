@@ -126,15 +126,15 @@ router.post('/check', async (req: Request, res: Response) => {
     }
     if (coinsEarned > 0) await addCoins(coinsEarned, REWARDS_PATH)
 
-    // Bonus: session complete
+    // Bonus: session complete (only on correct answer to last problem)
     const isLast = problemIndex === session.problems.length - 1
-    if (isLast) {
+    if (isLast && result.correct) {
       coinsEarned += COIN_VALUES.SESSION_COMPLETE
       await addCoins(COIN_VALUES.SESSION_COMPLETE, REWARDS_PATH)
     }
 
-    // Bonus: studying the day before an exam
-    if (assignment?.type === 'exam') {
+    // Bonus: studying the day before an exam (only on correct answer)
+    if (result.correct && assignment?.type === 'exam') {
       const daysUntil = Math.ceil((new Date(assignment.dueDate).getTime() - Date.now()) / (1000 * 60 * 60 * 24))
       if (daysUntil <= 1 && problemIndex === 0 && !previouslyWrong) {
         coinsEarned += COIN_VALUES.PRE_EXAM_STUDY
